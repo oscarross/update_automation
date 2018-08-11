@@ -1,37 +1,38 @@
 #!/usr/bin/env bash
 
-# A POSIX variable
-OPTIND=1         # Reset in case getopts has been used previously in the shell.
+CYAN='\033[1;36m'
+NC='\033[0m' # No Color
+
+OPTIND=1
 
 should_update_mas=false
 should_update_brew=false
 should_update_gem=false
 
 mas_action() {
-	echo -e "\033[31m MAS upgrade"
+	echo -e "${CYAN}🖥  MAS upgrade 🖥${NC}"
 	mas upgrade
 }
 
 brew_action() {
-	echo -e "\033[31m BREW update"
+	echo -e "${CYAN}🍺 BREW update 🍺${NC}"
 	brew update
-	echo -e "\033[31m BREW upgrade"
+	echo -e "${CYAN}🍺 BREW upgrade 🍺${NC}"
 	brew upgrade
-	echo -e "\033[31m BREW cleanup"
+	echo -e "${CYAN}🍺 BREW cleanup 🍺${NC}"
 	brew cleanup
-	echo -e "\033[31m BREW cask cleanup"
+	echo -e "${CYAN}🍺 BREW cask cleanup 🍺${NC}"
 	brew cask cleanup
 }
 
 gem_action() {
-	echo -e "\033[31m GEM update system"
+	echo -e "${CYAN}💎 GEM update system 💎${NC}"
 	gem update --system
-	echo -e "\033[31m GEM update"
+	echo -e "${CYAN}💎 GEM update 💎${NC}"
 	gem update
-	echo -e "\033[31m GEM cleanup"
+	echo -e "${CYAN}💎 GEM cleanup 💎${NC}"
 	gem cleanup
 }
-
 
 show_help() {
 cat << EOF
@@ -47,10 +48,16 @@ OPTIONS:
 EOF
 }
 
-while getopts "h?abgm" opt; 
+if [[ ! $@ =~ ^\-.+ ]]
+then
+	show_help
+    exit 0
+fi
+
+while getopts "habgm:" opt; 
 do
     case "$opt" in
-    h|\?)
+    h)
         show_help
         exit 0
         ;;
