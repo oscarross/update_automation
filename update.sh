@@ -21,8 +21,6 @@ brew_action() {
 	brew upgrade
 	echo -e "${CYAN}🍺 BREW cleanup 🍺${NC}"
 	brew cleanup
-	echo -e "${CYAN}🍺 BREW cask cleanup 🍺${NC}"
-	brew cask cleanup
 }
 
 gem_action() {
