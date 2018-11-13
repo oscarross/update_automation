@@ -1,6 +1,6 @@
 # update_automation
 
-Bash script to automate updating application from AppStore, RubyGems and Package in Homebrew
+Bash script to automate updating system Mac OS, application from AppStore, RubyGems and Package in Homebrew
 
 ```bash
 Usage: ./update.sh [options]
@@ -11,5 +11,5 @@ OPTIONS:
 -b           Brew update
 -g           Gem update
 -h           Help
--m           Mas (AppStore) update
+-m           Mac OS and AppStore update
 ```

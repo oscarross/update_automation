@@ -5,13 +5,15 @@ NC='\033[0m' # No Color
 
 OPTIND=1
 
-should_update_mas=false
+should_update_mac=false
 should_update_brew=false
 should_update_gem=false
 
-mas_action() {
-	echo -e "${CYAN}🖥  MAS upgrade 🖥${NC}"
+mac_action() {
+	echo -e "${CYAN}🖥  AppStrone - MAS upgrade 🖥${NC}"
 	mas upgrade
+    echo -e "${CYAN}🖥  Mac OS upgrade 🖥${NC}"
+    softwareupdate --install --all
 }
 
 brew_action() {
@@ -42,7 +44,7 @@ OPTIONS:
    -b           Brew update
    -g           Gem update
    -h           Help
-   -m           Mas update
+   -m           Mac OS and AppStore update
 EOF
 }
 
@@ -71,13 +73,13 @@ do
 		should_update_gem=true
 	    ;;
     m)  
-		should_update_mas=true
+		should_update_mac=true
         ;;
     esac
 done
 
-if $should_update_mas; then
-    mas_action
+if $should_update_mac; then
+    mac_action
 fi
 
 if $should_update_brew; then
