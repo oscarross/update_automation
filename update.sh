@@ -62,7 +62,7 @@ do
         exit 0
         ;;
     a)  
-		should_update_mas=true
+		should_update_mac=true
 		should_update_brew=true
 		should_update_gem=true	
         ;;
