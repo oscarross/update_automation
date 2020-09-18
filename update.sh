@@ -10,32 +10,34 @@ should_update_brew=false
 should_update_gem=false
 
 mac_action() {
-	echo -e "${CYAN}🖥  AppStrone - MAS upgrade 🖥${NC}"
-	mas upgrade
+    echo -e "${CYAN}🖥  AppStrone - MAS upgrade 🖥${NC}"
+    mas upgrade
     echo -e "${CYAN}🖥  Mac OS upgrade 🖥${NC}"
     softwareupdate --install --all
 }
 
 brew_action() {
-	echo -e "${CYAN}🍺 BREW update 🍺${NC}"
-	brew update
-	echo -e "${CYAN}🍺 BREW upgrade 🍺${NC}"
-	brew upgrade
-	echo -e "${CYAN}🍺 BREW cleanup 🍺${NC}"
-	brew cleanup
+    echo -e "${CYAN}🍺 BREW update 🍺${NC}"
+    brew update
+    echo -e "${CYAN}🍺 BREW upgrade 🍺${NC}"
+    brew upgrade
+    echo -e "${CYAN}🍺 BREW CASK upgrade 🍺${NC}"
+    brew upgrade --cask --greedy
+    echo -e "${CYAN}🍺 BREW cleanup 🍺${NC}"
+    brew cleanup
 }
 
 gem_action() {
-	echo -e "${CYAN}💎 GEM update system 💎${NC}"
-	gem update --system
-	echo -e "${CYAN}💎 GEM update 💎${NC}"
-	gem update
-	echo -e "${CYAN}💎 GEM cleanup 💎${NC}"
-	gem cleanup
+    echo -e "${CYAN}💎 GEM update system 💎${NC}"
+    gem update --system
+    echo -e "${CYAN}💎 GEM update 💎${NC}"
+    gem update
+    echo -e "${CYAN}💎 GEM cleanup 💎${NC}"
+    gem cleanup
 }
 
 show_help() {
-cat << EOF
+    cat <<EOF
 Usage: $0 [options]
 EXAMPLE:
     $0 -a
@@ -48,32 +50,30 @@ OPTIONS:
 EOF
 }
 
-if [[ ! $@ =~ ^\-.+ ]]
-then
-	show_help
+if [[ ! $@ =~ ^\-.+ ]]; then
+    show_help
     exit 0
 fi
 
-while getopts "habgm:" opt; 
-do
+while getopts "habgm:" opt; do
     case "$opt" in
     h)
         show_help
         exit 0
         ;;
-    a)  
-		should_update_mac=true
-		should_update_brew=true
-		should_update_gem=true	
+    a)
+        should_update_mac=true
+        should_update_brew=true
+        should_update_gem=true
         ;;
-    b)  
-		should_update_brew=true
+    b)
+        should_update_brew=true
         ;;
-    g)  
-		should_update_gem=true
-	    ;;
-    m)  
-		should_update_mac=true
+    g)
+        should_update_gem=true
+        ;;
+    m)
+        should_update_mac=true
         ;;
     esac
 done
