@@ -10,7 +10,7 @@ should_update_brew=false
 should_update_gem=false
 
 mac_action() {
-    echo -e "${CYAN}🖥  AppStrone - MAS upgrade 🖥${NC}"
+    echo -e "${CYAN}🖥  MAS upgrade applications from AppStore 🖥${NC}"
     mas upgrade
     echo -e "${CYAN}🖥  Mac OS upgrade 🖥${NC}"
     softwareupdate --install --all
