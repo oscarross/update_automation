@@ -81,7 +81,8 @@ gem_action() {
 }
 
 show_summary() {
-    local END_TIME=$(date +%s)
+    local END_TIME
+    END_TIME=$(date +%s)
     local DURATION=$((END_TIME - START_TIME))
     local MINUTES=$((DURATION / 60))
     local SECONDS=$((DURATION % 60))
@@ -110,7 +111,7 @@ OPTIONS:
 EOF
 }
 
-if [[ $# -eq 0 ]] || [[ ! $@ =~ ^\-.+ ]]; then
+if [[ $# -eq 0 ]] || [[ ! $* =~ ^\-.+ ]]; then
     show_help
     exit 0
 fi
