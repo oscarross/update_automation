@@ -9,7 +9,11 @@ if [[ -t 1 ]]; then
     RED='\033[1;31m'
     NC='\033[0m'
 else
-    CYAN="" GREEN="" YELLOW="" RED="" NC=""
+    CYAN=""
+    GREEN=""
+    YELLOW=""
+    RED=""
+    NC=""
 fi
 
 OPTIND=1
