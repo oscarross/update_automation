@@ -56,8 +56,14 @@ mac_action() {
         log_info "🖥  MAS upgrade applications from AppStore 🖥"
         mas upgrade
     fi
+    check_command softwareupdate || return 0
     log_info "🖥  Mac OS upgrade 🖥"
-    softwareupdate --install --all
+    # softwareupdate needs root; skip (instead of aborting) when sudo is unavailable
+    if sudo -v; then
+        sudo softwareupdate --install --all
+    else
+        log_warning "No sudo access, skipping macOS system update"
+    fi
 }
 
 brew_action() {
