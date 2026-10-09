@@ -101,6 +101,7 @@ class Runner:
         self.proc = None
         self.thread = None
         self.stop_flag = False
+        self.sudo_ok = True
 
     @property
     def busy(self):
@@ -129,6 +130,10 @@ class Runner:
                 for i, s in enumerate(g.steps):
                     if not s.available:
                         self.log.put(f"\x00warn⚠ {s.cmd[0]} not installed, skipping {s.label}")
+                        g.done += 1
+                        continue
+                    if s.sudo and not self.sudo_ok:
+                        self.log.put(f"\x00warn⚠ no sudo access, skipping {s.label}")
                         g.done += 1
                         continue
                     if self.stop_flag:
@@ -175,7 +180,7 @@ class Runner:
         if self.proc and self.proc.poll() is None:
             try:
                 os.killpg(self.proc.pid, 15)
-            except ProcessLookupError:
+            except OSError:  # already gone, or a root-owned process we may not signal
                 pass
 
 
@@ -347,8 +352,11 @@ class App:
         if SUDO and any(s.sudo and s.available for g in todo for s in g.steps):
             curses.def_prog_mode()
             curses.endwin()
-            print("sudo password needed for macOS softwareupdate:")
-            subprocess.call(["sudo", "-v"])
+            print("sudo is needed for the macOS system update (Ctrl+C or no access = skip it):")
+            try:
+                self.runner.sudo_ok = subprocess.call(["sudo", "-v"]) == 0
+            except KeyboardInterrupt:
+                self.runner.sudo_ok = False
             curses.reset_prog_mode()
             self.scr.refresh()
         self.lines.clear()

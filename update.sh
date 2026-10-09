@@ -26,7 +26,9 @@ quiet=false
 
 # Helper functions
 log_info() {
-    [[ "$quiet" == false ]] && echo -e "${CYAN}$1${NC}"
+    if [[ "$quiet" == false ]]; then
+        echo -e "${CYAN}$1${NC}"
+    fi
 }
 
 log_success() {
@@ -54,8 +56,14 @@ mac_action() {
         log_info "🖥  MAS upgrade applications from AppStore 🖥"
         mas upgrade
     fi
+    check_command softwareupdate || return 0
     log_info "🖥  Mac OS upgrade 🖥"
-    softwareupdate --install --all
+    # softwareupdate needs root; skip (instead of aborting) when sudo is unavailable
+    if sudo -v; then
+        sudo softwareupdate --install --all
+    else
+        log_warning "No sudo access, skipping macOS system update"
+    fi
 }
 
 brew_action() {
@@ -85,11 +93,11 @@ show_summary() {
     END_TIME=$(date +%s)
     local DURATION=$((END_TIME - START_TIME))
     local MINUTES=$((DURATION / 60))
-    local SECONDS=$((DURATION % 60))
+    local SECS=$((DURATION % 60))
     
     echo ""
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${GREEN}✨ Update completed in ${MINUTES}m ${SECONDS}s${NC}"
+    echo -e "${GREEN}✨ Update completed in ${MINUTES}m ${SECS}s${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
@@ -111,7 +119,7 @@ OPTIONS:
 EOF
 }
 
-if [[ $# -eq 0 ]] || [[ ! $* =~ ^\-.+ ]]; then
+if [[ $# -eq 0 ]]; then
     show_help
     exit 0
 fi
@@ -145,6 +153,11 @@ while getopts "habgmq" opt; do
         ;;
     esac
 done
+
+if ! $should_update_mac && ! $should_update_brew && ! $should_update_gem; then
+    show_help
+    exit 0
+fi
 
 if $should_update_mac; then
     mac_action
