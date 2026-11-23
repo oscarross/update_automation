@@ -20,7 +20,8 @@ OPTIONS:
 
 ### Error handling
 
-`update.sh` tries to finish as much as possible instead of stopping at the first error:
+Both `update.sh` and the TUI try to finish as much as possible instead of stopping at
+the first error:
 
 - **Brew formulae** - `brew upgrade --formula` errors are logged as a warning and the
   script continues.
@@ -31,16 +32,15 @@ OPTIONS:
 - **Gem with macOS system Ruby** - if `gem` points at the system Ruby (`/Library/Ruby`
   or `/System/Library`), the gem step is skipped, because it can't be written to without
   `sudo`. Install Ruby with `brew install ruby` instead.
-- **Gem with Homebrew Ruby** - errors from `gem update --system` are logged as a warning
-  (the plugin regeneration step often fails with `EACCES` on the read-only Cellar after
-  the update itself worked). Broken or non-writable plugin symlinks in the gem `plugins`
-  dir are removed before `gem update`.
+- **Gem with Homebrew Ruby** - `gem update --system` is skipped. Homebrew updates
+  RubyGems together with Ruby (`brew upgrade ruby`), and running it by hand fails with
+  `EACCES` on the read-only Cellar files. For other Rubies (rbenv, asdf, ...) it runs
+  as usual.
+- **Stale gem plugins** - broken or non-writable symlinks in the gem `plugins` dir
+  (left behind by earlier `gem update --system` runs) are removed before `gem update`.
 
-Problems are collected and listed after the summary. In that case the script exits with
-code `1`, which helps when it runs from cron or another script.
-
-These fallbacks only apply to `update.sh`. The TUI below still runs the plain commands
-and stops a group at its first failing step.
+`update.sh` collects problems and lists them after the summary. In that case the script
+exits with code `1`, which helps when it runs from cron or another script.
 
 ## TUI
 
@@ -53,8 +53,10 @@ Interactive terminal UI (Python 3, stdlib `curses`, no dependencies):
 
 One entry per group - **Mac** (App Store + softwareupdate), **Brew** (update, upgrade,
 cask upgrade, cleanup) and **Gem** (update --system, update, cleanup). Each group runs
-its steps in order and stops at the first failure. The UI shows per-step progress, an
-overall progress bar and a live log.
+its steps in order and stops at the first failure. Brew `upgrade` and `cask upgrade`
+are soft steps: their errors are logged and the group continues, finishing with a `warn`
+status instead of `ok` (see [Error handling](#error-handling)). The UI shows per-step
+progress, an overall progress bar and a live log.
 
 Keys: `↑/↓` move, `space` toggle group, `a`/`n` select all/none, `Enter` run selected,
 `c` list outdated for the highlighted group, `x` stop, `PgUp/PgDn` scroll log, `q` quit.

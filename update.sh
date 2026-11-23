@@ -128,10 +128,16 @@ gem_action() {
         return 0
     fi
 
-    log_info "💎 GEM update system 💎"
-    # Homebrew Ruby ships read-only Cellar files; --system's plugin
-    # regeneration step can fail (EACCES) harmlessly after the real update succeeds.
-    gem update --system || log_warning "gem update --system reported an error (often harmless with Homebrew Ruby)"
+    # Homebrew Ruby: RubyGems is updated by `brew upgrade ruby`, and
+    # `gem update --system` fails on the read-only Cellar files.
+    local ruby_exe
+    ruby_exe=$(gem env 2>/dev/null | sed -n 's/^ *- RUBY EXECUTABLE: //p' || true)
+    if command -v brew &>/dev/null && [[ -n "$ruby_exe" && "$ruby_exe" == "$(brew --prefix)/"* ]]; then
+        log_info "💎 GEM update system skipped (Homebrew Ruby, updated by brew upgrade ruby) 💎"
+    else
+        log_info "💎 GEM update system 💎"
+        gem update --system || add_problem "gem update --system failed"
+    fi
 
     # Stale plugin symlinks can point into the read-only Cellar and block reinstalls.
     # -w follows the link, so this removes broken links and links to read-only files.
