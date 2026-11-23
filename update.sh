@@ -23,6 +23,7 @@ should_update_mac=false
 should_update_brew=false
 should_update_gem=false
 quiet=false
+problems=()
 
 # Helper functions
 log_info() {
@@ -41,6 +42,20 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}❌ $1${NC}"
+}
+
+add_problem() {
+    problems+=("$1")
+    log_warning "$1"
+}
+
+# Two copies of a default gem (e.g. rdoc bundled with Homebrew Ruby and a newer one
+# from `gem update`) both get loaded and Ruby prints harmless constant redefinition
+# warnings on every gem command. Hide only those lines.
+GEM_NOISE='/gems/.*: warning: (already initialized constant|previous definition of) '
+
+gem_run() {
+    gem "$@" 2> >(grep -vE "$GEM_NOISE" >&2 || true)
 }
 
 check_command() {
@@ -66,26 +81,87 @@ mac_action() {
     fi
 }
 
+cask_upgrade_all() {
+    local cask outdated
+    local casks=()
+    local failed=()
+
+    if ! outdated=$(brew outdated --cask --greedy --quiet); then
+        add_problem "brew outdated --cask failed, skipping cask upgrade"
+        return 0
+    fi
+    # Read the list up front so brew/installers can't consume it from stdin.
+    while IFS= read -r cask; do
+        [[ -n "$cask" ]] && casks+=("$cask")
+    done <<< "$outdated"
+
+    # Upgrade casks one by one so a single failing cask doesn't stop the rest.
+    # Self-updating apps (auto_updates) can leave stale Caskroom staging dirs,
+    # which makes the normal upgrade fail; fall back to a forced install.
+    for cask in ${casks[@]+"${casks[@]}"}; do
+        if brew upgrade --cask "$cask"; then
+            continue
+        fi
+        log_warning "Upgrade of $cask failed, retrying with forced install..."
+        if ! brew install --cask --force "$cask"; then
+            failed+=("$cask")
+        fi
+    done
+
+    if (( ${#failed[@]} > 0 )); then
+        log_error "Cask upgrade failed for: ${failed[*]}"
+        problems+=("Cask upgrade failed for: ${failed[*]}")
+    fi
+}
+
 brew_action() {
     check_command brew || return 0
     log_info "🍺 BREW update 🍺"
     brew update
     log_info "🍺 BREW upgrade 🍺"
-    brew upgrade
+    brew upgrade --formula || add_problem "brew upgrade --formula reported errors"
     log_info "🍺 BREW CASK upgrade 🍺"
-    brew upgrade --cask --greedy
+    cask_upgrade_all
     log_info "🍺 BREW cleanup 🍺"
     brew cleanup
 }
 
 gem_action() {
     check_command gem || return 0
-    log_info "💎 GEM update system 💎"
-    gem update --system
+
+    local gem_dir
+    gem_dir=$(gem env gemdir 2>/dev/null || true)
+    if [[ "$gem_dir" == /Library/Ruby/* || "$gem_dir" == /System/Library/* ]]; then
+        log_warning "gem is using macOS system Ruby ($gem_dir), which is not writable without sudo."
+        log_warning "Install Ruby via Homebrew instead: brew install ruby"
+        return 0
+    fi
+
+    # Homebrew Ruby: RubyGems is updated by `brew upgrade ruby`, and
+    # `gem update --system` fails on the read-only Cellar files.
+    local ruby_exe brew_prefix=""
+    ruby_exe=$(gem env 2>/dev/null | sed -n 's/^ *- RUBY EXECUTABLE: //p' || true)
+    command -v brew &>/dev/null && brew_prefix=$(brew --prefix 2>/dev/null || true)
+    if [[ -n "$brew_prefix" && ( "$ruby_exe" == "$brew_prefix/"* || "$gem_dir" == "$brew_prefix/"* ) ]]; then
+        log_info "💎 GEM update system skipped (Homebrew Ruby, updated by brew upgrade ruby) 💎"
+    else
+        log_info "💎 GEM update system 💎"
+        gem_run update --system || add_problem "gem update --system failed"
+    fi
+
+    # Stale plugin symlinks can point into the read-only Cellar and block reinstalls.
+    # -w follows the link, so this removes broken links and links to read-only files.
+    local link
+    if [[ -n "$gem_dir" && -d "$gem_dir/plugins" ]]; then
+        while IFS= read -r link; do
+            [[ -w "$link" ]] || rm -f "$link" || true
+        done < <(find "$gem_dir/plugins" -type l)
+    fi
+
     log_info "💎 GEM update 💎"
-    gem update
+    gem_run update
     log_info "💎 GEM cleanup 💎"
-    gem cleanup
+    gem_run cleanup
 }
 
 show_summary() {
@@ -99,6 +175,16 @@ show_summary() {
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}✨ Update completed in ${MINUTES}m ${SECS}s${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    if (( ${#problems[@]} > 0 )); then
+        echo ""
+        log_warning "Finished with ${#problems[@]} problem(s):"
+        local p
+        for p in "${problems[@]}"; do
+            echo "   - $p"
+        done
+        return 1
+    fi
 }
 
 show_help() {

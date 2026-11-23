@@ -11,6 +11,7 @@ Keys:
 import curses
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -20,13 +21,19 @@ from dataclasses import dataclass, field
 
 SUDO = [] if os.geteuid() == 0 else ["sudo"]
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+# Harmless warnings printed by every gem command when two copies of a default gem
+# (e.g. rdoc bundled with Homebrew Ruby and a newer one from `gem update`) are loaded.
+GEM_NOISE = re.compile(r"/gems/.*: warning: (already initialized constant|previous definition of) ")
 
 
 @dataclass
 class Step:
     label: str
-    cmd: list
+    cmd: list  # cmd[0] decides availability; run instead of cmd when `run` is set
     sudo: bool = False
+    soft: bool = False  # failure is a warning: the group continues with the next step
+    run: object = None  # callable(runner) -> exit code
+    skip: object = None  # callable(runner) -> (reason, is_warning) to skip, or None
 
     @property
     def available(self):
@@ -40,7 +47,7 @@ class Group:
     steps: list
     outdated: list  # commands that list outdated items
     selected: bool = False
-    status: str = "idle"  # idle | running | ok | failed | skipped | missing
+    status: str = "idle"  # idle | running | ok | warn | failed | skipped | missing
     seconds: float = 0.0
     current: int = -1  # index of running step
     done: int = 0  # steps finished in the current run
@@ -58,6 +65,91 @@ class Group:
             self.status = "missing"
 
 
+def _capture(cmd):
+    """Output of a quick read-only command, or "" when it fails."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                              timeout=60).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def ruby_info(runner):
+    """(gem dir, ruby kind) where kind is "system", "homebrew" or "other". Cached per run."""
+    if "ruby" not in runner.cache:
+        gem_dir = _capture(["gem", "env", "gemdir"]).strip()
+        exe = ""
+        for line in _capture(["gem", "env"]).splitlines():
+            if "RUBY EXECUTABLE:" in line:
+                exe = line.split("RUBY EXECUTABLE:", 1)[1].strip()
+        prefix = _capture(["brew", "--prefix"]).strip() if shutil.which("brew") else ""
+        if gem_dir.startswith(("/Library/Ruby/", "/System/Library/")):
+            kind = "system"
+        elif prefix and (exe.startswith(prefix + "/") or gem_dir.startswith(prefix + "/")):
+            kind = "homebrew"
+        else:
+            kind = "other"
+        runner.cache["ruby"] = (gem_dir, kind)
+    return runner.cache["ruby"]
+
+
+def skip_system_ruby(runner):
+    if ruby_info(runner)[1] == "system":
+        return "macOS system Ruby is not writable without sudo (install it with: brew install ruby)", True
+    return None
+
+
+def skip_gem_system(runner):
+    if ruby_info(runner)[1] == "homebrew":
+        return "Homebrew Ruby - RubyGems is updated by brew upgrade ruby", False
+    return skip_system_ruby(runner)
+
+
+def cask_upgrade(runner):
+    """Upgrade outdated casks one by one, retrying failures with a forced install."""
+    try:
+        listing = subprocess.run(["brew", "outdated", "--cask", "--greedy", "--quiet"],
+                                 capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    except OSError as e:
+        runner.log.put(f"\x00err✖ {e}")
+        return 1
+    if listing.returncode != 0:
+        runner.log.put("\x00err✖ brew outdated --cask failed")
+        return 1
+    casks = [c for c in listing.stdout.split() if c]
+    if not casks:
+        runner.log.put("No outdated casks")
+    failed = []
+    for cask in casks:
+        if runner.stop_flag:
+            return 1
+        if runner._stream(["brew", "upgrade", "--cask", cask]) == 0:
+            continue
+        runner.log.put(f"\x00warn⚠ upgrade of {cask} failed, retrying with forced install")
+        if runner.stop_flag or runner._stream(["brew", "install", "--cask", "--force", cask]) != 0:
+            failed.append(cask)
+    if failed:
+        runner.log.put(f"\x00err✖ cask upgrade failed for: {' '.join(failed)}")
+        return 1
+    return 0
+
+
+def gem_update(runner):
+    """Drop stale plugin symlinks (broken or into the read-only Cellar), then gem update."""
+    gem_dir = ruby_info(runner)[0]
+    plugins = os.path.join(gem_dir, "plugins") if gem_dir else ""
+    if plugins and os.path.isdir(plugins):
+        for name in os.listdir(plugins):
+            link = os.path.join(plugins, name)
+            if os.path.islink(link) and not os.access(link, os.W_OK):
+                try:
+                    os.remove(link)
+                    runner.log.put(f"removed stale plugin link {link}")
+                except OSError as e:
+                    runner.log.put(f"\x00warn⚠ could not remove {link}: {e}")
+    return runner._stream(["gem", "update"])
+
+
 def build_groups():
     return [
         Group("Mac", "App Store + macOS system updates", [
@@ -66,14 +158,14 @@ def build_groups():
         ], [["mas", "outdated"], ["softwareupdate", "--list"]]),
         Group("Brew", "Homebrew formulae and casks", [
             Step("update", ["brew", "update"]),
-            Step("upgrade", ["brew", "upgrade"]),
-            Step("cask upgrade", ["brew", "upgrade", "--cask", "--greedy"]),
+            Step("upgrade", ["brew", "upgrade", "--formula"], soft=True),
+            Step("cask upgrade", ["brew"], soft=True, run=cask_upgrade),
             Step("cleanup", ["brew", "cleanup"]),
         ], [["brew", "outdated"], ["brew", "outdated", "--cask", "--greedy"]]),
         Group("Gem", "RubyGems system and gems", [
-            Step("update --system", ["gem", "update", "--system"]),
-            Step("update", ["gem", "update"]),
-            Step("cleanup", ["gem", "cleanup"]),
+            Step("update --system", ["gem", "update", "--system"], skip=skip_gem_system),
+            Step("update", ["gem"], run=gem_update, skip=skip_system_ruby),
+            Step("cleanup", ["gem", "cleanup"], skip=skip_system_ruby),
         ], [["gem", "outdated"]]),
     ]
 
@@ -83,13 +175,14 @@ def demo_groups():
     def step(label, secs, fail=False):
         script = f"for i in 1 2 3; do echo '{label}: line '$i; sleep {secs}; done" + (
             "; echo boom >&2; exit 1" if fail else "")
-        return Step(label, ["sh", "-c", script])
+        return Step(label, ["sh", "-c", script], soft=label == "soft")
     echo = [["echo", "demo-pkg 1.0 -> 2.0"]]
     return [
         Group("Mac", "Demo group (ok)", [step("one", 0.2), step("two", 0.2)], echo),
         Group("Brew", "Demo group (ok, 4 steps)",
               [step("update", 0.15), step("upgrade", 0.2), step("cask", 0.15), step("cleanup", 0.1)], echo),
-        Group("Gem", "Demo group (fails)", [step("update", 0.2), step("broken", 0.2, fail=True)], echo),
+        Group("Gem", "Demo group (warns, then fails)",
+              [step("soft", 0.2, fail=True), step("update", 0.2), step("broken", 0.2, fail=True)], echo),
     ]
 
 
@@ -102,6 +195,7 @@ class Runner:
         self.thread = None
         self.stop_flag = False
         self.sudo_ok = True
+        self.cache = {}
 
     @property
     def busy(self):
@@ -111,12 +205,16 @@ class Runner:
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL, text=True, errors="replace",
                                      start_new_session=True)
+        noisy = os.path.basename(cmd[0]) == "gem"
         for line in self.proc.stdout:
+            if noisy and GEM_NOISE.search(line):
+                continue
             self.log.put(line.rstrip("\r\n").split("\r")[-1].expandtabs(4))
         return self.proc.wait()
 
     def run(self, groups):
         def work():
+            self.cache.clear()
             for g in groups:
                 g.status, g.seconds, g.done, g.current = "idle", 0.0, 0, -1
             for g in groups:
@@ -126,7 +224,7 @@ class Runner:
                 g.status = "running"
                 start = time.time()
                 self.log.put(f"\x00head━━ {g.name} ━━")
-                ok = True
+                ok, warned = True, False
                 for i, s in enumerate(g.steps):
                     if not s.available:
                         self.log.put(f"\x00warn⚠ {s.cmd[0]} not installed, skipping {s.label}")
@@ -139,21 +237,37 @@ class Runner:
                     if self.stop_flag:
                         ok = False
                         break
+                    skip = s.skip(self) if s.skip else None
+                    if skip:
+                        reason, is_warning = skip
+                        if is_warning:
+                            self.log.put(f"\x00warn⚠ skipping {s.label}: {reason}")
+                            warned = True
+                        else:
+                            self.log.put(f"• skipping {s.label}: {reason}")
+                        g.done += 1
+                        continue
                     g.current = i
                     self.log.put(f"\x00step» {s.label}")
                     try:
-                        rc = self._stream((SUDO if s.sudo else []) + s.cmd)
+                        rc = s.run(self) if s.run else self._stream((SUDO if s.sudo else []) + s.cmd)
                     except OSError as e:
                         self.log.put(f"\x00err✖ {e}")
                         rc = 1
                     g.done += 1
-                    if rc != 0:
+                    if rc != 0 and s.soft and not self.stop_flag:
+                        self.log.put(f"\x00warn⚠ {s.label} reported errors (code {rc}), continuing")
+                        warned = True
+                    elif rc != 0:
                         self.log.put(f"\x00err✖ {s.label} exited with code {rc}")
                         ok = False
                         break
                 g.current = -1
                 g.seconds = time.time() - start
-                g.status = "ok" if ok else ("skipped" if self.stop_flag else "failed")
+                if not ok:
+                    g.status = "skipped" if self.stop_flag else "failed"
+                else:
+                    g.status = "warn" if warned else "ok"
             self.log.put("\x00head• Stopped" if self.stop_flag else "\x00ok✔ All done")
         self.stop_flag = False
         self.thread = threading.Thread(target=work, daemon=True)
@@ -187,7 +301,7 @@ class Runner:
 # colour pair ids
 C_OK, C_ERR, C_WARN, C_ACCENT, C_TITLE, C_KEY = range(1, 7)
 BADGE = {  # status -> (symbol, colour)
-    "idle": ("○", 0), "running": ("●", C_WARN), "ok": ("✔", C_OK),
+    "idle": ("○", 0), "running": ("●", C_WARN), "ok": ("✔", C_OK), "warn": ("⚠", C_WARN),
     "failed": ("✖", C_ERR), "skipped": ("–", 0), "missing": ("∅", C_ERR),
 }
 LOG_STYLES = {"head": (C_ACCENT, curses.A_BOLD), "step": (C_WARN, 0), "err": (C_ERR, curses.A_BOLD),
@@ -305,7 +419,7 @@ class App:
                     chip, attr = f"∅ {s.label}", self.col(C_ERR, curses.A_DIM)
                 elif g.status == "running" and j == g.current:
                     chip, attr = f"{spin} {s.label}", self.col(C_WARN, curses.A_BOLD)
-                elif g.status in ("running", "ok", "failed") and j < g.done:
+                elif g.status in ("running", "ok", "warn", "failed") and j < g.done:
                     chip, attr = f"✔ {s.label}", self.col(C_OK)
                 else:
                     chip, attr = f"· {s.label}", curses.A_DIM
