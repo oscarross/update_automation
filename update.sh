@@ -49,6 +49,15 @@ add_problem() {
     log_warning "$1"
 }
 
+# Two copies of a default gem (e.g. rdoc bundled with Homebrew Ruby and a newer one
+# from `gem update`) both get loaded and Ruby prints harmless constant redefinition
+# warnings on every gem command. Hide only those lines.
+GEM_NOISE='/gems/.*: warning: (already initialized constant|previous definition of) '
+
+gem_run() {
+    gem "$@" 2> >(grep -vE "$GEM_NOISE" >&2 || true)
+}
+
 check_command() {
     if ! command -v "$1" &>/dev/null; then
         log_warning "$1 not installed, skipping..."
@@ -121,7 +130,7 @@ gem_action() {
     check_command gem || return 0
 
     local gem_dir
-    gem_dir=$(gem env gemdir 2>/dev/null || echo "")
+    gem_dir=$(gem env gemdir 2>/dev/null || true)
     if [[ "$gem_dir" == /Library/Ruby/* || "$gem_dir" == /System/Library/* ]]; then
         log_warning "gem is using macOS system Ruby ($gem_dir), which is not writable without sudo."
         log_warning "Install Ruby via Homebrew instead: brew install ruby"
@@ -130,13 +139,14 @@ gem_action() {
 
     # Homebrew Ruby: RubyGems is updated by `brew upgrade ruby`, and
     # `gem update --system` fails on the read-only Cellar files.
-    local ruby_exe
+    local ruby_exe brew_prefix=""
     ruby_exe=$(gem env 2>/dev/null | sed -n 's/^ *- RUBY EXECUTABLE: //p' || true)
-    if command -v brew &>/dev/null && [[ -n "$ruby_exe" && "$ruby_exe" == "$(brew --prefix)/"* ]]; then
+    command -v brew &>/dev/null && brew_prefix=$(brew --prefix 2>/dev/null || true)
+    if [[ -n "$brew_prefix" && ( "$ruby_exe" == "$brew_prefix/"* || "$gem_dir" == "$brew_prefix/"* ) ]]; then
         log_info "💎 GEM update system skipped (Homebrew Ruby, updated by brew upgrade ruby) 💎"
     else
         log_info "💎 GEM update system 💎"
-        gem update --system || add_problem "gem update --system failed"
+        gem_run update --system || add_problem "gem update --system failed"
     fi
 
     # Stale plugin symlinks can point into the read-only Cellar and block reinstalls.
@@ -149,9 +159,9 @@ gem_action() {
     fi
 
     log_info "💎 GEM update 💎"
-    gem update
+    gem_run update
     log_info "💎 GEM cleanup 💎"
-    gem cleanup
+    gem_run cleanup
 }
 
 show_summary() {

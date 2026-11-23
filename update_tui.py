@@ -11,6 +11,7 @@ Keys:
 import curses
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,9 @@ from dataclasses import dataclass, field
 
 SUDO = [] if os.geteuid() == 0 else ["sudo"]
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+# Harmless warnings printed by every gem command when two copies of a default gem
+# (e.g. rdoc bundled with Homebrew Ruby and a newer one from `gem update`) are loaded.
+GEM_NOISE = re.compile(r"/gems/.*: warning: (already initialized constant|previous definition of) ")
 
 
 @dataclass
@@ -81,7 +85,7 @@ def ruby_info(runner):
         prefix = _capture(["brew", "--prefix"]).strip() if shutil.which("brew") else ""
         if gem_dir.startswith(("/Library/Ruby/", "/System/Library/")):
             kind = "system"
-        elif prefix and exe.startswith(prefix + "/"):
+        elif prefix and (exe.startswith(prefix + "/") or gem_dir.startswith(prefix + "/")):
             kind = "homebrew"
         else:
             kind = "other"
@@ -201,7 +205,10 @@ class Runner:
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL, text=True, errors="replace",
                                      start_new_session=True)
+        noisy = os.path.basename(cmd[0]) == "gem"
         for line in self.proc.stdout:
+            if noisy and GEM_NOISE.search(line):
+                continue
             self.log.put(line.rstrip("\r\n").split("\r")[-1].expandtabs(4))
         return self.proc.wait()
 

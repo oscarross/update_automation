@@ -38,6 +38,10 @@ the first error:
   as usual.
 - **Stale gem plugins** - broken or non-writable symlinks in the gem `plugins` dir
   (left behind by earlier `gem update --system` runs) are removed before `gem update`.
+- **rdoc warnings** - when a newer `rdoc` is installed next to the one bundled with Ruby,
+  every gem command prints `warning: already initialized constant RDoc::...` /
+  `previous definition of ... was here`. They are harmless and hidden from the output;
+  all other warnings and errors are still shown.
 
 `update.sh` collects problems and lists them after the summary. In that case the script
 exits with code `1`, which helps when it runs from cron or another script.
