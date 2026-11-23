@@ -66,22 +66,66 @@ mac_action() {
     fi
 }
 
+cask_upgrade_all() {
+    local cask
+    local failed=()
+
+    # Upgrade casks one by one so a single failing cask doesn't stop the rest.
+    # Self-updating apps (auto_updates) can leave stale Caskroom staging dirs,
+    # which makes the normal upgrade fail; fall back to a forced install.
+    while IFS= read -r cask; do
+        [[ -z "$cask" ]] && continue
+        if brew upgrade --cask "$cask"; then
+            continue
+        fi
+        log_warning "Upgrade of $cask failed, retrying with forced install..."
+        if ! brew install --cask --force "$cask"; then
+            failed+=("$cask")
+        fi
+    done < <(brew outdated --cask --greedy --quiet 2>/dev/null || true)
+
+    if (( ${#failed[@]} > 0 )); then
+        log_error "Cask upgrade failed for: ${failed[*]}"
+    fi
+}
+
 brew_action() {
     check_command brew || return 0
     log_info "🍺 BREW update 🍺"
     brew update
     log_info "🍺 BREW upgrade 🍺"
-    brew upgrade
+    brew upgrade --formula || log_warning "brew upgrade reported errors, continuing"
     log_info "🍺 BREW CASK upgrade 🍺"
-    brew upgrade --cask --greedy
+    cask_upgrade_all
     log_info "🍺 BREW cleanup 🍺"
     brew cleanup
 }
 
 gem_action() {
     check_command gem || return 0
+
+    local gem_dir
+    gem_dir=$(gem env gemdir 2>/dev/null || echo "")
+    if [[ "$gem_dir" == /Library/Ruby/* || "$gem_dir" == /System/Library/* ]]; then
+        log_warning "gem is using macOS system Ruby ($gem_dir), which is not writable without sudo."
+        log_warning "Install Ruby via Homebrew instead: brew install ruby"
+        return 0
+    fi
+
     log_info "💎 GEM update system 💎"
-    gem update --system
+    # Homebrew Ruby ships read-only Cellar files; --system's plugin
+    # regeneration step can fail (EACCES) harmlessly after the real update succeeds.
+    gem update --system || log_warning "gem update --system reported an error (often harmless with Homebrew Ruby)"
+
+    # Stale plugin symlinks can point into the read-only Cellar and block reinstalls.
+    local plugins_dir
+    plugins_dir=$(gem env gemdir 2>/dev/null)/plugins
+    if [[ -d "$plugins_dir" ]]; then
+        find "$plugins_dir" -type l | while IFS= read -r link; do
+            [[ -w "$link" ]] || rm -f "$link"
+        done
+    fi
+
     log_info "💎 GEM update 💎"
     gem update
     log_info "💎 GEM cleanup 💎"
