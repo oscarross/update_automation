@@ -36,6 +36,9 @@ OPTIONS:
   the update itself worked). Broken or non-writable plugin symlinks in the gem `plugins`
   dir are removed before `gem update`.
 
+Problems are collected and listed after the summary. In that case the script exits with
+code `1`, which helps when it runs from cron or another script.
+
 These fallbacks only apply to `update.sh`. The TUI below still runs the plain commands
 and stops a group at its first failing step.
 

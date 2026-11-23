@@ -23,6 +23,7 @@ should_update_mac=false
 should_update_brew=false
 should_update_gem=false
 quiet=false
+problems=()
 
 # Helper functions
 log_info() {
@@ -41,6 +42,11 @@ log_warning() {
 
 log_error() {
     echo -e "${RED}❌ $1${NC}"
+}
+
+add_problem() {
+    problems+=("$1")
+    log_warning "$1"
 }
 
 check_command() {
@@ -67,14 +73,23 @@ mac_action() {
 }
 
 cask_upgrade_all() {
-    local cask
+    local cask outdated
+    local casks=()
     local failed=()
+
+    if ! outdated=$(brew outdated --cask --greedy --quiet); then
+        add_problem "brew outdated --cask failed, skipping cask upgrade"
+        return 0
+    fi
+    # Read the list up front so brew/installers can't consume it from stdin.
+    while IFS= read -r cask; do
+        [[ -n "$cask" ]] && casks+=("$cask")
+    done <<< "$outdated"
 
     # Upgrade casks one by one so a single failing cask doesn't stop the rest.
     # Self-updating apps (auto_updates) can leave stale Caskroom staging dirs,
     # which makes the normal upgrade fail; fall back to a forced install.
-    while IFS= read -r cask; do
-        [[ -z "$cask" ]] && continue
+    for cask in ${casks[@]+"${casks[@]}"}; do
         if brew upgrade --cask "$cask"; then
             continue
         fi
@@ -82,10 +97,11 @@ cask_upgrade_all() {
         if ! brew install --cask --force "$cask"; then
             failed+=("$cask")
         fi
-    done < <(brew outdated --cask --greedy --quiet 2>/dev/null || true)
+    done
 
     if (( ${#failed[@]} > 0 )); then
         log_error "Cask upgrade failed for: ${failed[*]}"
+        problems+=("Cask upgrade failed for: ${failed[*]}")
     fi
 }
 
@@ -94,7 +110,7 @@ brew_action() {
     log_info "🍺 BREW update 🍺"
     brew update
     log_info "🍺 BREW upgrade 🍺"
-    brew upgrade --formula || log_warning "brew upgrade reported errors, continuing"
+    brew upgrade --formula || add_problem "brew upgrade --formula reported errors"
     log_info "🍺 BREW CASK upgrade 🍺"
     cask_upgrade_all
     log_info "🍺 BREW cleanup 🍺"
@@ -118,12 +134,12 @@ gem_action() {
     gem update --system || log_warning "gem update --system reported an error (often harmless with Homebrew Ruby)"
 
     # Stale plugin symlinks can point into the read-only Cellar and block reinstalls.
-    local plugins_dir
-    plugins_dir=$(gem env gemdir 2>/dev/null)/plugins
-    if [[ -d "$plugins_dir" ]]; then
-        find "$plugins_dir" -type l | while IFS= read -r link; do
-            [[ -w "$link" ]] || rm -f "$link"
-        done
+    # -w follows the link, so this removes broken links and links to read-only files.
+    local link
+    if [[ -n "$gem_dir" && -d "$gem_dir/plugins" ]]; then
+        while IFS= read -r link; do
+            [[ -w "$link" ]] || rm -f "$link" || true
+        done < <(find "$gem_dir/plugins" -type l)
     fi
 
     log_info "💎 GEM update 💎"
@@ -143,6 +159,16 @@ show_summary() {
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}✨ Update completed in ${MINUTES}m ${SECS}s${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+    if (( ${#problems[@]} > 0 )); then
+        echo ""
+        log_warning "Finished with ${#problems[@]} problem(s):"
+        local p
+        for p in "${problems[@]}"; do
+            echo "   - $p"
+        done
+        return 1
+    fi
 }
 
 show_help() {
